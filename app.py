@@ -28,6 +28,7 @@ from billing import (
     add_credits as billing_add_credits,
     count_ledger as billing_count_ledger,
     consume_credits as billing_consume_credits,
+    consume_trial_generation as billing_consume_trial_generation,
     create_payment as billing_create_payment,
     generation_credit_cost as billing_generation_credit_cost,
     get_last_payment_for_user as billing_get_last_payment_for_user,
@@ -39,6 +40,7 @@ from billing import (
     list_recent_payments as billing_list_recent_payments,
     list_recent_payments_for_user as billing_list_recent_payments_for_user,
     list_users as billing_list_users,
+    trial_remaining as billing_trial_remaining,
     init_billing,
     resolve_user_id_by_token,
     set_client_token as billing_set_client_token,
@@ -69,6 +71,8 @@ DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 BILLING_DB_PATH = Path(os.getenv("BILLING_DB_PATH", str(BASE_DIR / "billing.db")))
 BILLING_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 WEB_DEFAULT_CREDITS = int(os.getenv("DEFAULT_NEW_CHAT_CREDITS", "20"))
+TRIAL_ENABLED = (os.getenv("TRIAL_ENABLED") or "0").strip().lower() in {"1", "true", "yes", "on"}
+TRIAL_FREE_GENERATIONS = int(os.getenv("TRIAL_FREE_GENERATIONS", "3"))
 TASK_RETENTION_HOURS = int(os.getenv("WEB_TASK_RETENTION_HOURS", "168"))
 CLEANUP_INTERVAL_SECONDS = int(os.getenv("WEB_CLEANUP_INTERVAL_SECONDS", "600"))
 WEB_ADMIN_TOKEN = os.getenv("WEB_ADMIN_TOKEN", "").strip()
@@ -1283,31 +1287,76 @@ def generate():
         return jsonify({"error": "Неверный client_token"}), 401
 
     credit_cost = billing_generation_credit_cost(seconds=seconds, model=model, provider=provider)
-    ok, credits_after = billing_consume_credits(
-        db_path=BILLING_DB_PATH,
-        user_id=user_id,
-        amount=credit_cost,
-        reason="web_generation_consume",
-        meta={
-            "provider": provider,
-            "seconds": seconds,
-            "model": model,
-            "size": size,
-            "input_reference_type": reference_image_type if input_references_count else None,
-        },
-        default_credits=WEB_DEFAULT_CREDITS,
-    )
-    if not ok:
-        return (
-            jsonify(
-                {
-                    "error": "Недостаточно кредитов",
-                    "credits_required": credit_cost,
-                    "credits_available": credits_after,
-                }
-            ),
-            402,
+    consume_meta = {
+        "provider": provider,
+        "seconds": seconds,
+        "model": model,
+        "size": size,
+        "input_reference_type": reference_image_type if input_references_count else None,
+    }
+    used_trial = False
+    trial_remaining_after = 0
+    credits_spent = credit_cost
+    if TRIAL_ENABLED:
+        trial_ok, trial_remaining_after = billing_consume_trial_generation(
+            db_path=BILLING_DB_PATH,
+            user_id=user_id,
+            trial_limit=TRIAL_FREE_GENERATIONS,
+            reason="trial_generation_consume",
+            meta=consume_meta,
+            default_credits=WEB_DEFAULT_CREDITS,
         )
+        if trial_ok:
+            used_trial = True
+            credits_after = billing_get_credits(
+                db_path=BILLING_DB_PATH,
+                user_id=user_id,
+                default_credits=WEB_DEFAULT_CREDITS,
+            )
+            credits_spent = 0
+        else:
+            ok, credits_after = billing_consume_credits(
+                db_path=BILLING_DB_PATH,
+                user_id=user_id,
+                amount=credit_cost,
+                reason="web_generation_consume",
+                meta=consume_meta,
+                default_credits=WEB_DEFAULT_CREDITS,
+            )
+            if not ok:
+                return (
+                    jsonify(
+                        {
+                            "error": "Недостаточно кредитов",
+                            "credits_required": credit_cost,
+                            "credits_available": credits_after,
+                            "trial_enabled": True,
+                            "trial_remaining": 0,
+                            "trial_limit": TRIAL_FREE_GENERATIONS,
+                        }
+                    ),
+                    402,
+                )
+    else:
+        ok, credits_after = billing_consume_credits(
+            db_path=BILLING_DB_PATH,
+            user_id=user_id,
+            amount=credit_cost,
+            reason="web_generation_consume",
+            meta=consume_meta,
+            default_credits=WEB_DEFAULT_CREDITS,
+        )
+        if not ok:
+            return (
+                jsonify(
+                    {
+                        "error": "Недостаточно кредитов",
+                        "credits_required": credit_cost,
+                        "credits_available": credits_after,
+                    }
+                ),
+                402,
+            )
 
     task_id = str(uuid.uuid4())
     input_reference_path = None
@@ -1337,7 +1386,7 @@ def generate():
         model=model,
         size=size,
         remix_source_video_id=remix_source_video_id or None,
-        credits_spent=credit_cost,
+        credits_spent=credits_spent,
         credits_after=credits_after,
         credits_refunded=False,
         status="queued",
@@ -1368,8 +1417,11 @@ def generate():
         {
             "task_id": task_id,
             "provider": provider,
-            "credits_spent": credit_cost,
+            "credits_spent": credits_spent,
             "credits_after": credits_after,
+            "used_trial": used_trial,
+            "trial_remaining": trial_remaining_after if TRIAL_ENABLED else 0,
+            "trial_limit": TRIAL_FREE_GENERATIONS if TRIAL_ENABLED else 0,
         }
     ), 202
 
@@ -1412,7 +1464,24 @@ def credits():
         user_id=user_id,
         default_credits=WEB_DEFAULT_CREDITS,
     )
-    return jsonify({"user_id": user_id, "credits": balance})
+    trial_left = (
+        billing_trial_remaining(
+            db_path=BILLING_DB_PATH,
+            user_id=user_id,
+            trial_limit=TRIAL_FREE_GENERATIONS,
+        )
+        if TRIAL_ENABLED
+        else 0
+    )
+    return jsonify(
+        {
+            "user_id": user_id,
+            "credits": balance,
+            "trial_enabled": TRIAL_ENABLED,
+            "trial_limit": TRIAL_FREE_GENERATIONS if TRIAL_ENABLED else 0,
+            "trial_remaining": trial_left,
+        }
+    )
 
 
 @app.get("/payments/packages")

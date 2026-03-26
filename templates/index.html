@@ -524,6 +524,11 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Ошибка credits");
         creditsBalanceEl.textContent = `${data.credits} кр.`;
+        if (data.trial_enabled) {
+          const left = Number(data.trial_remaining || 0);
+          const limit = Number(data.trial_limit || 0);
+          creditsBalanceEl.textContent += ` • trial: ${left}/${limit}`;
+        }
       } catch (_err) {
         creditsBalanceEl.textContent = "ошибка";
       }

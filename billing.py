@@ -295,6 +295,60 @@ def count_ledger(db_path: Path, user_id: Optional[str] = None) -> int:
     return int(row["c"] if row else 0)
 
 
+def count_trial_consumes(db_path: Path, user_id: str) -> int:
+    with _LOCK:
+        with _connect(db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM ledger
+                WHERE user_id = ? AND reason = 'trial_generation_consume'
+                """,
+                (str(user_id),),
+            ).fetchone()
+    return int(row["c"] if row else 0)
+
+
+def trial_remaining(db_path: Path, user_id: str, trial_limit: int) -> int:
+    limit = max(int(trial_limit), 0)
+    if limit <= 0:
+        return 0
+    consumed = count_trial_consumes(db_path, user_id=str(user_id))
+    return max(limit - consumed, 0)
+
+
+def consume_trial_generation(
+    db_path: Path,
+    user_id: str,
+    trial_limit: int,
+    reason: str = "trial_generation_consume",
+    meta: Optional[dict] = None,
+    default_credits: int = 0,
+) -> tuple[bool, int]:
+    now_ts = int(time.time())
+    with _LOCK:
+        _upsert_user(db_path, user_id, default_credits)
+        with _connect(db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM ledger
+                WHERE user_id = ? AND reason = 'trial_generation_consume'
+                """,
+                (str(user_id),),
+            ).fetchone()
+            consumed = int(row["c"] if row else 0)
+            limit = max(int(trial_limit), 0)
+            remaining = max(limit - consumed, 0)
+            if remaining <= 0:
+                return False, 0
+            conn.execute(
+                "INSERT INTO ledger (user_id, delta, reason, meta_json, created_at) VALUES (?, ?, ?, ?, ?)",
+                (str(user_id), 0, reason, json.dumps(meta or {}, ensure_ascii=False), now_ts),
+            )
+            return True, max(remaining - 1, 0)
+
+
 def generation_credit_cost(seconds: int, model: str, provider: str = "sora") -> int:
     provider = (provider or "sora").strip().lower()
     sec = int(seconds)

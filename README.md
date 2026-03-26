@@ -124,6 +124,13 @@ WEB_TASK_RETENTION_HOURS=168
 WEB_CLEANUP_INTERVAL_SECONDS=600
 ```
 
+Пробный доступ (trial) без оплаты:
+
+```env
+TRIAL_ENABLED=1
+TRIAL_FREE_GENERATIONS=3
+```
+
 ## Команды бота
 
 - `/start`, `/help`
@@ -131,6 +138,7 @@ WEB_CLEANUP_INTERVAL_SECONDS=600
 - `/status`
 - `/myid`
 - `/credits`
+- `/trial` — остаток бесплатных генераций
 - `/buy`
 - `/paycheck`
 - `/admin [chat_id]` - кнопочная админ-панель кредитов

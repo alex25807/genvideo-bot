@@ -30,11 +30,13 @@ from billing import (
     apply_payment_credits_if_needed as billing_apply_payment_credits_if_needed,
     add_credits as billing_add_credits,
     consume_credits as billing_consume_credits,
+    consume_trial_generation as billing_consume_trial_generation,
     create_payment as billing_create_payment,
     generation_credit_cost as billing_generation_credit_cost,
     get_client_token_for_user as billing_get_client_token_for_user,
     get_credits as billing_get_credits,
     get_last_payment_for_user as billing_get_last_payment_for_user,
+    trial_remaining as billing_trial_remaining,
     init_billing,
     set_client_token as billing_set_client_token,
     set_credits as billing_set_credits,
@@ -222,6 +224,7 @@ def build_help() -> str:
         "3) Нажми «Запустить» и дождись готового видео.\n\n"
         "Команды:\n"
         "/credits — баланс кредитов\n"
+        "/trial — остаток бесплатных генераций\n"
         "/buy — купить пакет кредитов\n"
         "/paycheck — проверить статус последней оплаты\n"
         "/web — открыть web c уже подставленным client_token\n"
@@ -549,6 +552,8 @@ def main() -> None:
     rate_sora2 = float(os.getenv("SORA2_PRICE_PER_SECOND_RUB", "20"))
     rate_sora2_pro = float(os.getenv("SORA2_PRO_PRICE_PER_SECOND_RUB", "30"))
     rate_veo31 = float(os.getenv("VEO31_PRICE_PER_SECOND_RUB", "25"))
+    trial_enabled = (os.getenv("TRIAL_ENABLED") or "0").strip().lower() in {"1", "true", "yes", "on"}
+    trial_free_generations = int(os.getenv("TRIAL_FREE_GENERATIONS", "3"))
     billing_db_path = Path(os.getenv("BILLING_DB_PATH", os.getenv("CREDITS_DB_PATH", "billing.db")))
     default_new_chat_credits = int(os.getenv("DEFAULT_NEW_CHAT_CREDITS", "20"))
     input_ref_dir = Path(os.getenv("TELEGRAM_INPUT_REF_DIR", "telegram_input_refs"))
@@ -741,14 +746,52 @@ def main() -> None:
             default_credits=default_new_chat_credits,
         )
 
-    def consume_credits(chat_id: int, amount: int) -> tuple[bool, int]:
-        return billing_consume_credits(
+    def get_trial_remaining(chat_id: int) -> int:
+        if not trial_enabled:
+            return 0
+        return billing_trial_remaining(
+            db_path=billing_db_path,
+            user_id=str(chat_id),
+            trial_limit=trial_free_generations,
+        )
+
+    def consume_generation_access(chat_id: int, amount: int, settings: dict) -> tuple[bool, int, bool, int]:
+        """
+        Returns:
+            ok, credits_after, used_trial, trial_remaining_after
+        """
+        if trial_enabled:
+            trial_ok, trial_left = billing_consume_trial_generation(
+                db_path=billing_db_path,
+                user_id=str(chat_id),
+                trial_limit=trial_free_generations,
+                reason="trial_generation_consume",
+                meta={
+                    "provider": settings.get("provider", "sora"),
+                    "seconds": int(settings.get("seconds", 4)),
+                    "model": str(settings.get("model", "sora-2")),
+                    "size": str(settings.get("size", "1280x720")),
+                    "source": "telegram",
+                },
+                default_credits=default_new_chat_credits,
+            )
+            if trial_ok:
+                return True, get_credits(chat_id), True, trial_left
+        ok, credits_after = billing_consume_credits(
             db_path=billing_db_path,
             user_id=str(chat_id),
             amount=int(amount),
             default_credits=default_new_chat_credits,
             reason="telegram_generation_consume",
+            meta={
+                "provider": settings.get("provider", "sora"),
+                "seconds": int(settings.get("seconds", 4)),
+                "model": str(settings.get("model", "sora-2")),
+                "size": str(settings.get("size", "1280x720")),
+                "source": "telegram",
+            },
         )
+        return ok, credits_after, False, get_trial_remaining(chat_id)
 
     def set_credits(chat_id: int, amount: int) -> int:
         return billing_set_credits(
@@ -1333,7 +1376,20 @@ def main() -> None:
                 )
                 return
             if cmd == "/credits":
-                tg.send_message(chat_id, f"Баланс кредитов: {get_credits(chat_id)}")
+                credits_text = f"Баланс кредитов: {get_credits(chat_id)}"
+                if trial_enabled:
+                    credits_text += f"\nПробные генерации: {get_trial_remaining(chat_id)} из {trial_free_generations}"
+                tg.send_message(chat_id, credits_text)
+                return
+            if cmd == "/trial":
+                if not trial_enabled:
+                    tg.send_message(chat_id, "Пробный режим сейчас выключен.")
+                    return
+                left = get_trial_remaining(chat_id)
+                tg.send_message(
+                    chat_id,
+                    f"Пробные генерации: осталось {left} из {trial_free_generations}.",
+                )
                 return
             if cmd == "/buy":
                 if not payments_enabled():
@@ -1473,7 +1529,7 @@ def main() -> None:
                     tg.send_message(chat_id, block_reason)
                     return
                 need = generation_credit_cost(settings)
-                ok, balance_after = consume_credits(chat_id, need)
+                ok, balance_after, used_trial, trial_left = consume_generation_access(chat_id, need, settings)
                 if not ok:
                     tg.send_message(
                         chat_id,
@@ -1484,11 +1540,15 @@ def main() -> None:
                     chat_id,
                     "Запускаю remix:\n"
                     f"source={source_video_id}\n"
-                    f"Списано кредитов: {need}. Остаток: {balance_after}.",
+                    + (
+                        f"🎁 Использован trial. Осталось попыток: {trial_left}.\nБаланс: {balance_after}."
+                        if used_trial
+                        else f"Списано кредитов: {need}. Остаток: {balance_after}."
+                    ),
                 )
                 threading.Thread(
                     target=run_generation,
-                    args=(chat_id, remix_prompt, settings, source_video_id, None, need),
+                    args=(chat_id, remix_prompt, settings, source_video_id, None, 0 if used_trial else need),
                     daemon=True,
                 ).start()
                 return
@@ -1747,7 +1807,7 @@ def main() -> None:
                 tg.send_message(chat_id, block_reason)
                 return
             need = generation_credit_cost(settings)
-            ok, balance_after = consume_credits(chat_id, need)
+            ok, balance_after, used_trial, trial_left = consume_generation_access(chat_id, need, settings)
             if not ok:
                 tg.send_message(
                     chat_id,
@@ -1756,11 +1816,16 @@ def main() -> None:
                 return
             tg.send_message(
                 chat_id,
-                f"Списано кредитов: {need}. Остаток: {balance_after}. Повторяю генерацию...",
+                (
+                    f"🎁 Использован trial. Осталось попыток: {trial_left}. Баланс: {balance_after}. "
+                    "Повторяю генерацию..."
+                    if used_trial
+                    else f"Списано кредитов: {need}. Остаток: {balance_after}. Повторяю генерацию..."
+                ),
             )
             threading.Thread(
                 target=run_generation,
-                args=(chat_id, prompt, settings, None, None, need),
+                args=(chat_id, prompt, settings, None, None, 0 if used_trial else need),
                 daemon=True,
             ).start()
             return
@@ -1793,7 +1858,7 @@ def main() -> None:
                 "size": fallback_size,
             }
             need = generation_credit_cost(settings)
-            ok, balance_after = consume_credits(chat_id, need)
+            ok, balance_after, used_trial, trial_left = consume_generation_access(chat_id, need, settings)
             if not ok:
                 tg.send_message(
                     chat_id,
@@ -1805,11 +1870,15 @@ def main() -> None:
                 chat_id,
                 "Повторяю в Sora:\n"
                 f"model={settings['model']}, seconds={settings['seconds']}, size={settings['size']}\n"
-                f"Списано кредитов: {need}. Остаток: {balance_after}.",
+                + (
+                    f"🎁 Использован trial. Осталось попыток: {trial_left}. Баланс: {balance_after}."
+                    if used_trial
+                    else f"Списано кредитов: {need}. Остаток: {balance_after}."
+                ),
             )
             threading.Thread(
                 target=run_generation,
-                args=(chat_id, prompt, settings, None, None, need),
+                args=(chat_id, prompt, settings, None, None, 0 if used_trial else need),
                 daemon=True,
             ).start()
             return
@@ -1919,7 +1988,7 @@ def main() -> None:
                 tg.send_message(chat_id, block_reason)
                 return
             need = generation_credit_cost(settings)
-            ok, balance_after = consume_credits(chat_id, need)
+            ok, balance_after, used_trial, trial_left = consume_generation_access(chat_id, need, settings)
             if not ok:
                 tg.send_message(
                     chat_id,
@@ -1935,11 +2004,22 @@ def main() -> None:
                 f"provider={settings.get('provider', 'sora')}, "
                 f"reference_type={settings.get('reference_image_type', 'asset')}, "
                 f"model={settings['model']}, seconds={settings['seconds']}, size={settings['size']}\n"
-                f"Списано кредитов: {need}. Остаток: {balance_after}.",
+                + (
+                    f"🎁 Использован trial. Осталось попыток: {trial_left}. Баланс: {balance_after}."
+                    if used_trial
+                    else f"Списано кредитов: {need}. Остаток: {balance_after}."
+                ),
             )
             threading.Thread(
                 target=run_generation,
-                args=(chat_id, last_prompt_by_chat[chat_id], settings, None, draft_refs, need),
+                args=(
+                    chat_id,
+                    last_prompt_by_chat[chat_id],
+                    settings,
+                    None,
+                    draft_refs,
+                    0 if used_trial else need,
+                ),
                 daemon=True,
             ).start()
             return
@@ -1987,6 +2067,7 @@ def main() -> None:
                     {"command": "start", "description": "Старт и быстрые кнопки"},
                     {"command": "web", "description": "Открыть веб-кабинет"},
                     {"command": "credits", "description": "Показать баланс"},
+                    {"command": "trial", "description": "Остаток пробных генераций"},
                     {"command": "buy", "description": "Купить пакет кредитов"},
                     {"command": "status", "description": "Текущие параметры"},
                     {"command": "help", "description": "Справка"},
