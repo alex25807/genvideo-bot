@@ -605,14 +605,24 @@ def main() -> None:
     lock = threading.Lock()
     init_billing(billing_db_path)
 
-    def build_web_url(chat_id: int) -> Optional[str]:
+    def build_web_url(chat_id: int) -> tuple[str, bool]:
         token = billing_get_client_token_for_user(
             db_path=billing_db_path,
             user_id=str(chat_id),
         )
+        created = False
         if not token:
-            return None
-        return f"{app_base_url}/?client_token={quote(token)}"
+            # UX: для обычного пользователя не требуем ручных действий админа.
+            # Создаем token автоматически при первом входе в web.
+            token = f"web-{chat_id}-{uuid.uuid4().hex[:20]}"
+            billing_set_client_token(
+                db_path=billing_db_path,
+                user_id=str(chat_id),
+                token=token,
+                default_credits=default_new_chat_credits,
+            )
+            created = True
+        return f"{app_base_url}/?client_token={quote(token)}", created
 
     def tbank_enabled() -> bool:
         return bool(tbank_terminal_key and tbank_password)
@@ -1310,15 +1320,12 @@ def main() -> None:
                 tg.send_message(chat_id, f"Ваш chat_id: {chat_id}")
                 return
             if cmd == "/web":
-                web_url = build_web_url(chat_id)
-                if not web_url:
+                web_url, created = build_web_url(chat_id)
+                if created:
                     tg.send_message(
                         chat_id,
-                        "Для вас ещё не задан web token.\n"
-                        "Попросите админа выполнить:\n"
-                        f"/set_web_token {chat_id} <token>",
+                        "Готово: я автоматически создал ваш web token.",
                     )
-                    return
                 tg.send_message(
                     chat_id,
                     "Откройте сайт по этой ссылке (token подставится автоматически):\n"
@@ -1601,15 +1608,12 @@ def main() -> None:
             return
 
         if data == "start:web":
-            web_url = build_web_url(chat_id)
-            if not web_url:
+            web_url, created = build_web_url(chat_id)
+            if created:
                 tg.send_message(
                     chat_id,
-                    "Для вас ещё не задан web token.\n"
-                    "Попросите админа выполнить:\n"
-                    f"/set_web_token {chat_id} <token>",
+                    "Готово: я автоматически создал ваш web token.",
                 )
-                return
             tg.send_message(
                 chat_id,
                 "Откройте сайт по этой ссылке (token подставится автоматически):\n"
