@@ -216,10 +216,10 @@ def parse_command(text: str) -> tuple[str, Optional[str]]:
 
 def build_help() -> str:
     return (
-        "Шаги:\n"
-        "1) Отправь prompt текстом\n"
-        "2) Выбери seconds/model/size кнопками\n"
-        "3) Нажми «Запустить»\n\n"
+        "Ваши действия:\n"
+        "1) Выбери режим ниже: «Генерировать в боте» или «Открыть веб».\n"
+        "2) Если выбрал бота — отправь prompt и настрой параметры кнопками.\n"
+        "3) Нажми «Запустить» и дождись готового видео.\n\n"
         "Команды:\n"
         "/credits — баланс кредитов\n"
         "/buy — купить пакет кредитов\n"
@@ -233,6 +233,21 @@ def build_help() -> str:
         "/clearrefs — очистить reference images в черновике\n"
         "/status — текущие параметры\n"
         "/help — помощь"
+    )
+
+
+def build_welcome() -> str:
+    return (
+        "Привет! Я бот для генерации видео по вашему запросу.\n\n"
+        "Ваши действия:\n"
+        "1️⃣ Выберите режим: 🤖 в боте или 🌐 в вебе.\n"
+        "2️⃣ Введите идею ролика (prompt) и параметры.\n"
+        "3️⃣ Запустите генерацию и получите готовое видео.\n\n"
+        "✅ Что умею:\n"
+        "• генерировать видео в Telegram и через веб;\n"
+        "• показывать баланс кредитов и статус оплаты;\n"
+        "• открывать веб со встроенным client_token (команда /web).\n\n"
+        "Нужна справка по всем командам — отправьте /help."
     )
 
 
@@ -256,19 +271,6 @@ def start_keyboard() -> dict:
                 {"text": "🌐 Открыть веб", "callback_data": "start:web"},
             ]
         ]
-    }
-
-
-def command_keyboard() -> dict:
-    # Постоянная клавиатура внизу чата: быстрый доступ к основным командам.
-    return {
-        "keyboard": [
-            [{"text": "/start"}, {"text": "/web"}],
-            [{"text": "/credits"}, {"text": "/buy"}],
-            [{"text": "/status"}, {"text": "/help"}],
-        ],
-        "resize_keyboard": True,
-        "is_persistent": True,
     }
 
 
@@ -1281,11 +1283,19 @@ def main() -> None:
 
         if text.startswith("/"):
             cmd, arg = parse_command(text)
-            if cmd in ("/start", "/help"):
-                tg.send_message(chat_id, build_help(), reply_markup=command_keyboard())
+            if cmd == "/start":
+                tg.send_message(chat_id, build_welcome())
                 tg.send_message(
                     chat_id,
                     "Выберите режим работы:",
+                    reply_markup=start_keyboard(),
+                )
+                return
+            if cmd == "/help":
+                tg.send_message(chat_id, build_help())
+                tg.send_message(
+                    chat_id,
+                    "Быстрый выбор режима:",
                     reply_markup=start_keyboard(),
                 )
                 return
