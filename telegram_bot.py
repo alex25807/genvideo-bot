@@ -109,6 +109,12 @@ class TelegramApi:
             payload["drop_pending_updates"] = True
         return self._post("deleteWebhook", payload)
 
+    def set_my_commands(self, commands: list[dict]) -> dict:
+        return self._post("setMyCommands", {"commands": commands})
+
+    def set_chat_menu_button(self, menu_button: dict) -> dict:
+        return self._post("setChatMenuButton", {"menu_button": menu_button})
+
     def send_message(self, chat_id: int, text: str, reply_markup: Optional[dict] = None) -> int:
         payload = {"chat_id": chat_id, "text": text}
         if reply_markup is not None:
@@ -240,6 +246,30 @@ def control_keyboard(show_retry_sora: bool = False) -> dict:
     if show_retry_sora:
         rows.append([{"text": "🔁 Повторить в Sora", "callback_data": "retry_in_sora"}])
     return {"inline_keyboard": rows}
+
+
+def start_keyboard() -> dict:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🤖 Генерировать в боте", "callback_data": "start:bot"},
+                {"text": "🌐 Открыть веб", "callback_data": "start:web"},
+            ]
+        ]
+    }
+
+
+def command_keyboard() -> dict:
+    # Постоянная клавиатура внизу чата: быстрый доступ к основным командам.
+    return {
+        "keyboard": [
+            [{"text": "/start"}, {"text": "/web"}],
+            [{"text": "/credits"}, {"text": "/buy"}],
+            [{"text": "/status"}, {"text": "/help"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
 
 
 def admin_keyboard(target_chat_id: int) -> dict:
@@ -572,6 +602,15 @@ def main() -> None:
     admin_pending_input: Dict[int, dict] = {}
     lock = threading.Lock()
     init_billing(billing_db_path)
+
+    def build_web_url(chat_id: int) -> Optional[str]:
+        token = billing_get_client_token_for_user(
+            db_path=billing_db_path,
+            user_id=str(chat_id),
+        )
+        if not token:
+            return None
+        return f"{app_base_url}/?client_token={quote(token)}"
 
     def tbank_enabled() -> bool:
         return bool(tbank_terminal_key and tbank_password)
@@ -1243,7 +1282,12 @@ def main() -> None:
         if text.startswith("/"):
             cmd, arg = parse_command(text)
             if cmd in ("/start", "/help"):
-                tg.send_message(chat_id, build_help())
+                tg.send_message(chat_id, build_help(), reply_markup=command_keyboard())
+                tg.send_message(
+                    chat_id,
+                    "Выберите режим работы:",
+                    reply_markup=start_keyboard(),
+                )
                 return
             if cmd == "/cancel":
                 if pending_admin_action:
@@ -1256,11 +1300,8 @@ def main() -> None:
                 tg.send_message(chat_id, f"Ваш chat_id: {chat_id}")
                 return
             if cmd == "/web":
-                token = billing_get_client_token_for_user(
-                    db_path=billing_db_path,
-                    user_id=str(chat_id),
-                )
-                if not token:
+                web_url = build_web_url(chat_id)
+                if not web_url:
                     tg.send_message(
                         chat_id,
                         "Для вас ещё не задан web token.\n"
@@ -1268,7 +1309,6 @@ def main() -> None:
                         f"/set_web_token {chat_id} <token>",
                     )
                     return
-                web_url = f"{app_base_url}/?client_token={quote(token)}"
                 tg.send_message(
                     chat_id,
                     "Откройте сайт по этой ссылке (token подставится автоматически):\n"
@@ -1541,6 +1581,30 @@ def main() -> None:
                 tg.send_message(chat_id, "Запрос на отмену принят.")
             else:
                 tg.send_message(chat_id, "Сейчас нет активной генерации.")
+            return
+
+        if data == "start:bot":
+            tg.send_message(
+                chat_id,
+                "Режим бота активен. Пришлите текстовый prompt — открою параметры генерации.",
+            )
+            return
+
+        if data == "start:web":
+            web_url = build_web_url(chat_id)
+            if not web_url:
+                tg.send_message(
+                    chat_id,
+                    "Для вас ещё не задан web token.\n"
+                    "Попросите админа выполнить:\n"
+                    f"/set_web_token {chat_id} <token>",
+                )
+                return
+            tg.send_message(
+                chat_id,
+                "Откройте сайт по этой ссылке (token подставится автоматически):\n"
+                f"{web_url}",
+            )
             return
 
         if data.startswith("pay:"):
@@ -1902,7 +1966,25 @@ def main() -> None:
         except Exception as exc:
             print(f"[WARN] getWebhookInfo/deleteWebhook: {exc}", flush=True)
 
+    def _ensure_bot_menu() -> None:
+        try:
+            tg.set_my_commands(
+                [
+                    {"command": "start", "description": "Старт и быстрые кнопки"},
+                    {"command": "web", "description": "Открыть веб-кабинет"},
+                    {"command": "credits", "description": "Показать баланс"},
+                    {"command": "buy", "description": "Купить пакет кредитов"},
+                    {"command": "status", "description": "Текущие параметры"},
+                    {"command": "help", "description": "Справка"},
+                ]
+            )
+            # Кнопка меню открывает список команд (где есть /web).
+            tg.set_chat_menu_button({"type": "commands"})
+        except Exception as exc:
+            print(f"[WARN] Не удалось настроить меню команд: {exc}", flush=True)
+
     _telegram_bootstrap_polling()
+    _ensure_bot_menu()
 
     if allowed_chat_id is not None:
         print(
