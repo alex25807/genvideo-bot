@@ -1,0 +1,16 @@
+[Unit]
+Description=Video Generator Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/video-generator
+Environment="PATH=/opt/video-generator/.venv/bin"
+ExecStart=/opt/video-generator/.venv/bin/python telegram_bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

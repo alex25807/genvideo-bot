@@ -1,0 +1,18 @@
+.env
+__pycache__/
+*.pyc
+
+# Local runtime data
+*.db
+*.db-*
+*.bak
+*.bak_*
+generation.log
+
+# Generated media
+*.mp4
+web_videos/
+telegram_input_refs/
+
+# Local terminal artifacts
+.cursor/

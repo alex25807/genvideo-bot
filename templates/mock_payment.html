@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mock Payment</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #0f172a;
+      color: #e5e7eb;
+      margin: 0;
+      padding: 24px;
+    }
+    .card {
+      max-width: 680px;
+      margin: 0 auto;
+      background: #111827;
+      border: 1px solid #374151;
+      border-radius: 14px;
+      padding: 20px;
+    }
+    h2 { margin-top: 0; }
+    .note {
+      background: #1f2937;
+      border: 1px solid #374151;
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 16px;
+      color: #cbd5e1;
+    }
+    .row {
+      margin: 8px 0;
+    }
+    .status {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 4px 10px;
+      background: #1d4ed8;
+      color: #fff;
+      font-weight: 700;
+    }
+    .actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .ok { background: #10b981; color: #052e16; }
+    .cancel { background: #ef4444; color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Mock payment</h2>
+    <div class="note">
+      Тестовый режим для локальной проверки оплаты. Реального списания денег не происходит.
+    </div>
+    <div class="row">payment_id: {{ payment["payment_id"] }}</div>
+    <div class="row">Пакет: {{ payment["package_id"] }}</div>
+    <div class="row">Сумма: {{ payment["amount_rub"] }} ₽</div>
+    <div class="row">Кредиты: {{ payment["credits"] }}</div>
+    <div class="row">
+      Статус:
+      <span class="status">{{ status_label }}</span>
+    </div>
+    <div class="row">Кредиты начислены: {{ "да" if credits_applied else "нет" }}</div>
+
+    {% if can_confirm or can_cancel %}
+      <div class="actions">
+        {% if can_confirm %}
+          <form method="post" action="/mock-pay/{{ payment['payment_id'] }}/confirm">
+            {% if mock_payments_token %}
+              <input type="hidden" name="token" value="{{ mock_payments_token }}">
+            {% endif %}
+            <button class="ok" type="submit">Подтвердить оплату</button>
+          </form>
+        {% endif %}
+        {% if can_cancel %}
+          <form method="post" action="/mock-pay/{{ payment['payment_id'] }}/cancel">
+            {% if mock_payments_token %}
+              <input type="hidden" name="token" value="{{ mock_payments_token }}">
+            {% endif %}
+            <button class="cancel" type="submit">Отменить оплату</button>
+          </form>
+        {% endif %}
+      </div>
+    {% else %}
+      <div class="note" style="margin-top: 16px;">
+        Действия недоступны: платеж уже находится в финальном состоянии.
+      </div>
+    {% endif %}
+  </div>
+</body>
+</html>

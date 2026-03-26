@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sora Video Generator</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #111827;
+      --card-2: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --primary: #3b82f6;
+      --ok: #10b981;
+      --err: #ef4444;
+      --border: #374151;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(180deg, #0b1024 0%, #0f172a 100%);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 28px 16px;
+    }
+    .container {
+      width: 100%;
+      max-width: 860px;
+      background: rgba(17,24,39,0.92);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.35);
+    }
+    h2 { margin: 0 0 18px; font-size: 30px; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .row { margin-bottom: 12px; }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 600;
+      color: #d1d5db;
+    }
+    input, select, button {
+      width: 100%;
+      padding: 11px 12px;
+      font-size: 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--card-2);
+      color: var(--text);
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(59,130,246,.25);
+    }
+    button {
+      background: linear-gradient(90deg, #2563eb, #1d4ed8);
+      border-color: #1d4ed8;
+      cursor: pointer;
+      font-weight: 700;
+    }
+    button:hover { filter: brightness(1.07); }
+    .stats {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin: 12px 0 4px;
+    }
+    .chip {
+      border: 1px solid var(--border);
+      background: #0b1225;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 13px;
+      color: #cbd5e1;
+    }
+    .progress-wrap {
+      margin-top: 12px;
+      background: #0b1225;
+      border-radius: 999px;
+      overflow: hidden;
+      height: 24px;
+      border: 1px solid var(--border);
+    }
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #2563eb, #3b82f6);
+      color: #fff;
+      text-align: center;
+      line-height: 24px;
+      transition: width .3s ease;
+      font-size: 13px;
+    }
+    .error { color: var(--err); margin-top: 8px; }
+    .ok { color: var(--ok); margin-top: 8px; }
+    .muted { color: var(--muted); }
+    #paymentHistoryBox { white-space: pre-line; }
+    .pay-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 4px 0;
+      flex-wrap: wrap;
+    }
+    .pay-badge {
+      font-size: 12px;
+      font-weight: 700;
+      border-radius: 999px;
+      padding: 2px 8px;
+      border: 1px solid transparent;
+    }
+    .pay-badge-ok {
+      color: #065f46;
+      background: #a7f3d0;
+      border-color: #6ee7b7;
+    }
+    .pay-badge-warn {
+      color: #78350f;
+      background: #fde68a;
+      border-color: #fcd34d;
+    }
+    .pay-badge-err {
+      color: #7f1d1d;
+      background: #fecaca;
+      border-color: #fca5a5;
+    }
+    .pay-badge-muted {
+      color: #e5e7eb;
+      background: #374151;
+      border-color: #4b5563;
+    }
+    #paymentBox { white-space: normal; }
+    #downloadBtn { margin-top: 12px; display: none; }
+    #videoPlayerWrap { margin-top: 16px; display: none; }
+    #videoPlayer {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #000;
+    }
+    @media (max-width: 780px) {
+      .grid { grid-template-columns: 1fr; }
+      h2 { font-size: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Генерация видео (ProxyAPI + Sora)</h2>
+
+    <div class="row">
+      <label for="prompt">Prompt</label>
+      <input id="prompt" type="text" placeholder="Например: Орел в полете крепко держит рыбу в когтях...">
+    </div>
+
+    <div class="row">
+      <label for="clientToken">Client token (web-доступ)</label>
+      <input id="clientToken" type="text" placeholder="Токен выдается админом через /set_web_token">
+    </div>
+
+    <div class="grid">
+      <div class="row">
+        <label for="paymentPackage">Пополнить баланс (T-Банк)</label>
+        <select id="paymentPackage"></select>
+      </div>
+      <div class="row">
+        <label>&nbsp;</label>
+        <button id="buyCreditsBtn" type="button">Оплатить пакет</button>
+      </div>
+    </div>
+    <div class="row" style="margin-top:-4px;">
+      <button id="checkPaymentBtn" type="button">Проверить оплату вручную</button>
+    </div>
+    <div id="paymentBox" class="muted" style="margin-top:-6px; margin-bottom:12px;"></div>
+    <div id="paymentHistoryBox" class="muted" style="margin-top:-6px; margin-bottom:12px;"></div>
+
+    <div class="grid">
+      <div class="row">
+        <label for="inputReference">Референс-изображение (опционально)</label>
+        <input id="inputReference" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
+      </div>
+      <div class="row" id="inputReferencesRow" style="display:none;">
+        <label for="inputReferences">Veo referenceImages (до 3, опционально)</label>
+        <input id="inputReferences" type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
+      </div>
+      <div class="row" id="inputReferenceTypeRow" style="display:none;">
+        <label for="inputReferenceType">Veo referenceType</label>
+        <select id="inputReferenceType">
+          <option value="asset">asset</option>
+          <option value="style">style</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="remixSourceId">Remix source video_id (опционально)</label>
+        <input id="remixSourceId" type="text" placeholder="video_... (если нужен remix)">
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="row">
+        <label for="provider">Провайдер</label>
+        <select id="provider">
+          <option value="sora">sora</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="seconds">Длительность</label>
+        <select id="seconds">
+          <option value="4">4 сек</option>
+          <option value="8">8 сек</option>
+          <option value="12">12 сек</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="model">Модель</label>
+        <select id="model">
+          <option value="sora-2">sora-2</option>
+          <option value="sora-2-pro">sora-2-pro</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <label for="size">Размер</label>
+      <select id="size">
+        <option value="1280x720">1280x720</option>
+        <option value="720x1280">720x1280</option>
+        <option value="1024x1792">1024x1792</option>
+        <option value="1792x1024">1792x1024</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <button id="generateBtn">Запустить генерацию</button>
+    </div>
+
+    <div class="stats">
+      <div class="chip">Task ID: <span id="taskId">—</span></div>
+      <div class="chip">Статус: <span id="status">ожидание</span></div>
+      <div class="chip">Баланс: <span id="creditsBalance">—</span></div>
+      <div class="chip">Списание: <span id="creditsNeed">—</span></div>
+    </div>
+    <div id="providerNotice" class="error" style="display:none;"></div>
+
+    <div class="progress-wrap">
+      <div id="progressBar" class="progress-bar">0%</div>
+    </div>
+    <div id="errorBox" class="error"></div>
+    <div id="okBox" class="ok"></div>
+    <button id="downloadBtn">Скачать видео</button>
+
+    <div id="videoPlayerWrap">
+      <label>Предпросмотр</label>
+      <video id="videoPlayer" controls playsinline preload="none"></video>
+    </div>
+  </div>
+
+  <script>
+    let currentTaskId = localStorage.getItem("video_task_id") || null;
+    let pollTimer = null;
+    /** Защита от повторной загрузки предпросмотра для того же task_id */
+    let videoPreviewLoadedTaskId = null;
+
+    const promptEl = document.getElementById("prompt");
+    const clientTokenEl = document.getElementById("clientToken");
+    const providerEl = document.getElementById("provider");
+    const secondsEl = document.getElementById("seconds");
+    const modelEl = document.getElementById("model");
+    const sizeEl = document.getElementById("size");
+    const inputReferenceEl = document.getElementById("inputReference");
+    const inputReferencesEl = document.getElementById("inputReferences");
+    const inputReferencesRowEl = document.getElementById("inputReferencesRow");
+    const inputReferenceTypeEl = document.getElementById("inputReferenceType");
+    const inputReferenceTypeRowEl = document.getElementById("inputReferenceTypeRow");
+    const remixSourceIdEl = document.getElementById("remixSourceId");
+    const generateBtn = document.getElementById("generateBtn");
+    const taskIdEl = document.getElementById("taskId");
+    const statusEl = document.getElementById("status");
+    const creditsBalanceEl = document.getElementById("creditsBalance");
+    const creditsNeedEl = document.getElementById("creditsNeed");
+    const providerNoticeEl = document.getElementById("providerNotice");
+    const progressBar = document.getElementById("progressBar");
+    const errorBox = document.getElementById("errorBox");
+    const okBox = document.getElementById("okBox");
+    const downloadBtn = document.getElementById("downloadBtn");
+    const videoPlayerWrap = document.getElementById("videoPlayerWrap");
+    const videoPlayer = document.getElementById("videoPlayer");
+    const paymentPackageEl = document.getElementById("paymentPackage");
+    const buyCreditsBtn = document.getElementById("buyCreditsBtn");
+    const checkPaymentBtn = document.getElementById("checkPaymentBtn");
+    const paymentBoxEl = document.getElementById("paymentBox");
+    const paymentHistoryBoxEl = document.getElementById("paymentHistoryBox");
+    let paymentPollTimer = null;
+    let lastPaymentId = localStorage.getItem("last_payment_id") || null;
+    let providerCaps = {
+      sora: {
+        supports_remix: true,
+        supports_input_reference: true,
+        supports_reference_images: false,
+        max_reference_images: 0,
+        supported_reference_types: [],
+        allowed_seconds: [4, 8, 12],
+        allowed_models: ["sora-2", "sora-2-pro"],
+        allowed_sizes: ["1280x720", "720x1280", "1024x1792", "1792x1024"],
+        is_stub: false,
+        stub_message: "",
+      },
+    };
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const tokenFromUrl =
+      (urlParams.get("client_token") || urlParams.get("token") || "").trim();
+    if (tokenFromUrl) {
+      clientTokenEl.value = tokenFromUrl;
+      localStorage.setItem("web_client_token", tokenFromUrl);
+      // Убираем token из URL, чтобы не светить его при копировании ссылки.
+      const cleanUrl = `${window.location.pathname}${window.location.hash || ""}`;
+      window.history.replaceState({}, "", cleanUrl);
+    } else {
+      const savedToken = localStorage.getItem("web_client_token");
+      if (savedToken) clientTokenEl.value = savedToken;
+    }
+
+    function isFinalPaymentStatus(status) {
+      const s = String(status || "").toUpperCase();
+      return ["CONFIRMED", "REJECTED", "CANCELED", "DEADLINE_EXPIRED", "EXPIRED"].includes(s);
+    }
+
+    function paymentStatusLabel(status, statusLabel) {
+      if (statusLabel && String(statusLabel).trim()) return String(statusLabel).trim();
+      const code = String(status || "UNKNOWN").toUpperCase();
+      const map = {
+        NEW: "Ожидает оплаты",
+        FORM_SHOWED: "Ожидает оплаты",
+        AUTHORIZED: "Авторизован",
+        CONFIRMED: "Оплачен",
+        REJECTED: "Отклонен",
+        CANCELED: "Отменен",
+        DEADLINE_EXPIRED: "Истек срок оплаты",
+        EXPIRED: "Истек срок оплаты",
+        INIT_FAILED: "Ошибка инициализации",
+        UNKNOWN: "Неизвестно",
+      };
+      return map[code] || code;
+    }
+
+    function paymentStatusBadgeClass(status) {
+      const code = String(status || "UNKNOWN").toUpperCase();
+      if (code === "CONFIRMED") return "pay-badge-ok";
+      if (["REJECTED", "CANCELED", "INIT_FAILED"].includes(code)) return "pay-badge-err";
+      if (["NEW", "FORM_SHOWED", "AUTHORIZED"].includes(code)) return "pay-badge-warn";
+      return "pay-badge-muted";
+    }
+
+    function renderPaymentStatus(paymentId, status, statusLabel, prefix = "Платеж") {
+      const label = paymentStatusLabel(status, statusLabel);
+      const badgeClass = paymentStatusBadgeClass(status);
+      paymentBoxEl.innerHTML = `${prefix} ${paymentId}: <span class="pay-badge ${badgeClass}">${label}</span>`;
+    }
+
+    function setProgress(value) {
+      const v = Math.max(0, Math.min(100, Number(value || 0)));
+      progressBar.style.width = `${v}%`;
+      progressBar.textContent = `${v}%`;
+    }
+
+    function setStatus(text, isError = false) {
+      statusEl.textContent = text;
+      statusEl.className = isError ? "error" : "";
+    }
+
+    function resetVideoPreview() {
+      videoPlayer.pause();
+      const blobUrl = videoPlayer.dataset.blobUrl;
+      if (blobUrl) {
+        try {
+          URL.revokeObjectURL(blobUrl);
+        } catch (_e) {}
+        delete videoPlayer.dataset.blobUrl;
+      }
+      videoPlayer.removeAttribute("src");
+      videoPlayer.load();
+      videoPlayerWrap.style.display = "none";
+      videoPreviewLoadedTaskId = null;
+    }
+
+    /**
+     * Прямой src=/content/... часто даёт чёрный экран (MP4 + Range / moov в конце).
+     * Скачивание при этом работает — грузим тот же файл целиком в blob, как для attachment.
+     */
+    async function attachVideoPreview(taskId, relativeUrl) {
+      if (videoPreviewLoadedTaskId === taskId && videoPlayer.dataset.blobUrl) {
+        return;
+      }
+      videoPreviewLoadedTaskId = taskId;
+      videoPlayerWrap.style.display = "block";
+      okBox.textContent = "Видео готово. Загружаю предпросмотр...";
+      try {
+        if (videoPlayer.dataset.blobUrl) {
+          URL.revokeObjectURL(videoPlayer.dataset.blobUrl);
+          delete videoPlayer.dataset.blobUrl;
+        }
+        videoPlayer.removeAttribute("src");
+
+        const res = await fetch(relativeUrl);
+        if (!res.ok) {
+          const t = await res.text().catch(() => "");
+          throw new Error(`HTTP ${res.status} ${t.slice(0, 120)}`);
+        }
+        const blob = await res.blob();
+        if (!blob || blob.size === 0) {
+          throw new Error("пустой файл");
+        }
+        const objectUrl = URL.createObjectURL(blob);
+        videoPlayer.dataset.blobUrl = objectUrl;
+        videoPlayer.preload = "auto";
+        videoPlayer.src = objectUrl;
+        videoPlayer.load();
+      } catch (err) {
+        videoPreviewLoadedTaskId = null;
+        videoPlayerWrap.style.display = "none";
+        errorBox.textContent =
+          `Предпросмотр не загрузился (${err.message}). Используй кнопку «Скачать видео».`;
+        okBox.textContent = "Видео готово.";
+      }
+    }
+
+    function estimateNeedCredits() {
+      const provider = providerEl.value || "sora";
+      const seconds = Number(secondsEl.value || 4);
+      const model = modelEl.value || "sora-2";
+      if (provider === "veo") {
+        return ({4: 1, 6: 2, 8: 2}[seconds] || 1);
+      }
+      const secMult = {4: 1, 8: 2, 12: 3}[seconds] || 1;
+      const modelMult = model === "sora-2-pro" ? 2 : 1;
+      return secMult * modelMult;
+    }
+
+    function refillSelect(selectEl, values, selectedValue) {
+      selectEl.innerHTML = "";
+      values.forEach((v) => {
+        const option = document.createElement("option");
+        option.value = String(v);
+        option.textContent = String(v);
+        selectEl.appendChild(option);
+      });
+      if (selectedValue && values.map(String).includes(String(selectedValue))) {
+        selectEl.value = String(selectedValue);
+      } else if (values.length > 0) {
+        selectEl.value = String(values[0]);
+      }
+    }
+
+    function applyProviderCapabilities(providerName) {
+      const caps = providerCaps[providerName] || providerCaps.sora;
+      refillSelect(secondsEl, caps.allowed_seconds, secondsEl.value);
+      refillSelect(modelEl, caps.allowed_models, modelEl.value);
+      refillSelect(sizeEl, caps.allowed_sizes, sizeEl.value);
+      const supportsRefs = !!caps.supports_reference_images;
+      inputReferencesRowEl.style.display = supportsRefs ? "block" : "none";
+      inputReferenceTypeRowEl.style.display = supportsRefs ? "block" : "none";
+      if (supportsRefs) {
+        const refTypes = (caps.supported_reference_types && caps.supported_reference_types.length)
+          ? caps.supported_reference_types
+          : ["asset"];
+        refillSelect(inputReferenceTypeEl, refTypes, inputReferenceTypeEl.value || "asset");
+      }
+      if (!supportsRefs) {
+        inputReferencesEl.value = "";
+        inputReferenceTypeEl.value = "asset";
+      }
+      const isStub = !!caps.is_stub;
+      generateBtn.disabled = isStub;
+      if (isStub) {
+        providerNoticeEl.style.display = "block";
+        providerNoticeEl.textContent = caps.stub_message || `Provider "${providerName}" пока в режиме заглушки. Запуск генерации временно отключен.`;
+      } else {
+        providerNoticeEl.style.display = "none";
+        providerNoticeEl.textContent = "";
+      }
+      renderNeedCredits();
+    }
+
+    async function loadProviders() {
+      try {
+        const res = await fetch("/providers");
+        const data = await res.json();
+        if (!res.ok || !data.providers) throw new Error(data.error || "Ошибка загрузки providers");
+        providerCaps = data.providers;
+        const names = Object.keys(providerCaps);
+        if (!names.length) throw new Error("providers пуст");
+        refillSelect(providerEl, names, data.default_provider || "sora");
+        applyProviderCapabilities(providerEl.value);
+      } catch (_err) {
+        refillSelect(providerEl, ["sora"], "sora");
+        applyProviderCapabilities("sora");
+      }
+    }
+
+    function renderNeedCredits() {
+      creditsNeedEl.textContent = `${estimateNeedCredits()} кр.`;
+    }
+
+    async function refreshCredits() {
+      const clientToken = clientTokenEl.value.trim();
+      if (!clientToken) {
+        creditsBalanceEl.textContent = "—";
+        return;
+      }
+      try {
+        const res = await fetch(`/credits?client_token=${encodeURIComponent(clientToken)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Ошибка credits");
+        creditsBalanceEl.textContent = `${data.credits} кр.`;
+      } catch (_err) {
+        creditsBalanceEl.textContent = "ошибка";
+      }
+    }
+
+    async function loadPaymentPackages() {
+      try {
+        const res = await fetch("/payments/packages");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Ошибка загрузки пакетов");
+        const packages = Array.isArray(data.packages) ? data.packages : [];
+        paymentPackageEl.innerHTML = "";
+        packages.forEach((pkg) => {
+          const option = document.createElement("option");
+          option.value = String(pkg.id);
+          option.textContent = `${pkg.title || pkg.id} — ${pkg.credits} кр за ${pkg.rub} ₽`;
+          paymentPackageEl.appendChild(option);
+        });
+        const enabled = !!data.enabled && packages.length > 0;
+        paymentPackageEl.disabled = !enabled;
+        buyCreditsBtn.disabled = !enabled;
+        checkPaymentBtn.disabled = !enabled;
+        if (enabled) {
+          paymentBoxEl.textContent = data.mode === "mock"
+            ? "Mock mode: платеж подтверждается вручную на локальной тестовой странице."
+            : "Выбери пакет и оплати. После подтверждения баланс обновится автоматически.";
+        } else {
+          paymentBoxEl.textContent = "Платежи временно отключены.";
+        }
+      } catch (_err) {
+        paymentPackageEl.disabled = true;
+        buyCreditsBtn.disabled = true;
+        checkPaymentBtn.disabled = true;
+        paymentBoxEl.textContent = "Не удалось загрузить пакеты оплаты.";
+      }
+    }
+
+    function renderPaymentHistory(items) {
+      if (!Array.isArray(items) || !items.length) {
+        paymentHistoryBoxEl.textContent = "История платежей: пока пусто.";
+        return;
+      }
+      const rows = items.map((p) => {
+        const code = String(p.status || "UNKNOWN").toUpperCase();
+        const label = paymentStatusLabel(p.status, p.status_label);
+        const badgeClass = code === "CONFIRMED"
+          ? "pay-badge-ok"
+          : (code === "REJECTED" || code === "CANCELED" || code === "INIT_FAILED")
+            ? "pay-badge-err"
+            : (code === "NEW" || code === "FORM_SHOWED" || code === "AUTHORIZED")
+              ? "pay-badge-warn"
+              : "pay-badge-muted";
+        const mark = p.credits_applied ? "✅" : "•";
+        return `<div class="pay-row"><span>${mark} ${p.payment_id}</span><span class="pay-badge ${badgeClass}">${label}</span><span>${p.credits} кр, ${p.amount_rub} ₽</span></div>`;
+      });
+      paymentHistoryBoxEl.innerHTML = `<div>История платежей:</div>${rows.join("")}`;
+    }
+
+    async function loadPaymentHistory() {
+      const clientToken = clientTokenEl.value.trim();
+      if (!clientToken) {
+        paymentHistoryBoxEl.textContent = "История платежей: введи client token.";
+        return;
+      }
+      try {
+        const res = await fetch(`/payments/recent?client_token=${encodeURIComponent(clientToken)}&limit=3`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Ошибка истории платежей");
+        renderPaymentHistory(data.payments || []);
+      } catch (_err) {
+        paymentHistoryBoxEl.textContent = "История платежей: недоступна.";
+      }
+    }
+
+    async function pollPaymentStatus(paymentId, clientToken) {
+      if (paymentPollTimer) clearInterval(paymentPollTimer);
+      let shouldContinue = true;
+      const runOnce = async () => {
+        try {
+          const res = await fetch(`/payments/status/${encodeURIComponent(paymentId)}?client_token=${encodeURIComponent(clientToken)}`);
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Ошибка статуса платежа");
+          const status = String(data.status || "UNKNOWN");
+          renderPaymentStatus(paymentId, status, data.status_label, "Платеж");
+          if (status === "CONFIRMED" || data.credits_applied) {
+            shouldContinue = false;
+            paymentBoxEl.textContent = `Платеж подтвержден. Начислено ${data.credits} кр.`;
+            await refreshCredits();
+            await loadPaymentHistory();
+          } else if (isFinalPaymentStatus(status)) {
+            shouldContinue = false;
+            await loadPaymentHistory();
+          }
+        } catch (err) {
+          paymentBoxEl.textContent = `Ошибка проверки платежа: ${err.message}`;
+          shouldContinue = false;
+        }
+      };
+      await runOnce();
+      if (shouldContinue) {
+        paymentPollTimer = setInterval(runOnce, 5000);
+      } else if (paymentPollTimer) {
+        clearInterval(paymentPollTimer);
+        paymentPollTimer = null;
+      }
+    }
+
+    async function restoreLastPayment() {
+      const clientToken = clientTokenEl.value.trim();
+      if (!clientToken) return;
+      try {
+        const res = await fetch(`/payments/last?client_token=${encodeURIComponent(clientToken)}`);
+        const data = await res.json();
+        if (!res.ok || !data.payment || !data.payment.payment_id) return;
+        lastPaymentId = String(data.payment.payment_id);
+        localStorage.setItem("last_payment_id", lastPaymentId);
+        const status = String(data.payment.status || "UNKNOWN");
+        renderPaymentStatus(lastPaymentId, status, data.payment.status_label, "Последний платеж");
+        if (!isFinalPaymentStatus(status) && !data.payment.credits_applied) {
+          await pollPaymentStatus(lastPaymentId, clientToken);
+        }
+      } catch (_err) {
+        // silent fail: это необязательный UX хелпер
+      }
+    }
+
+    async function pollStatus(taskId) {
+      try {
+        const res = await fetch(`/status/${taskId}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Ошибка получения статуса");
+
+        taskIdEl.textContent = taskId;
+        setProgress(data.progress || 0);
+        setStatus(data.status || "unknown");
+        errorBox.textContent = "";
+        okBox.textContent = "";
+
+        if (data.status === "completed") {
+          clearInterval(pollTimer);
+          pollTimer = null;
+          setStatus("completed", false);
+          if (data.download_url) {
+            downloadBtn.style.display = "block";
+            downloadBtn.onclick = () => { window.location.href = data.download_url; };
+          }
+          if (data.video_url) {
+            await attachVideoPreview(taskId, data.video_url);
+          } else {
+            okBox.textContent = "Видео готово.";
+          }
+          if (typeof data.credits_after === "number") {
+            creditsBalanceEl.textContent = `${data.credits_after} кр.`;
+          }
+        } else if (data.status === "failed") {
+          clearInterval(pollTimer);
+          pollTimer = null;
+          setStatus("failed", true);
+          errorBox.textContent = data.error || "Генерация не удалась";
+          downloadBtn.style.display = "none";
+          resetVideoPreview();
+        }
+      } catch (err) {
+        errorBox.textContent = err.message;
+      }
+    }
+
+    function startPolling(taskId) {
+      if (pollTimer) clearInterval(pollTimer);
+      pollStatus(taskId);
+      pollTimer = setInterval(() => pollStatus(taskId), 2500);
+    }
+
+    generateBtn.addEventListener("click", async () => {
+      const prompt = promptEl.value.trim();
+      const clientToken = clientTokenEl.value.trim();
+      const remixSourceVideoId = remixSourceIdEl.value.trim();
+      if (!prompt) return (errorBox.textContent = "Введите prompt");
+      if (!clientToken) return (errorBox.textContent = "Введите client token");
+
+      localStorage.setItem("web_client_token", clientToken);
+      errorBox.textContent = "";
+      okBox.textContent = "";
+      downloadBtn.style.display = "none";
+      resetVideoPreview();
+      setProgress(0);
+      setStatus("queued");
+
+      try {
+        const formData = new FormData();
+        const provider = providerEl.value || "sora";
+        formData.append("prompt", prompt);
+        formData.append("client_token", clientToken);
+        formData.append("provider", provider);
+        formData.append("seconds", String(Number(secondsEl.value)));
+        formData.append("model", modelEl.value);
+        formData.append("size", sizeEl.value);
+        if (remixSourceVideoId) {
+          formData.append("remix_source_video_id", remixSourceVideoId);
+        }
+        const file = inputReferenceEl.files && inputReferenceEl.files[0];
+        if (file) {
+          formData.append("input_reference", file);
+        }
+        const refFiles = (inputReferencesEl.files ? Array.from(inputReferencesEl.files) : []).slice(0, 3);
+        const refType = inputReferenceTypeEl.value || "asset";
+        if (file && refFiles.length) {
+          throw new Error("Нельзя передавать одновременно input_reference и input_references");
+        }
+        if (refFiles.length) {
+          formData.append("input_reference_type", refType);
+          if (provider === "veo") {
+            if (Number(secondsEl.value) !== 8) {
+              throw new Error("Для Veo referenceImages требуется seconds=8");
+            }
+            if (sizeEl.value !== "1280x720") {
+              throw new Error("Для Veo referenceImages требуется size=1280x720");
+            }
+            if (refType === "style" && refFiles.length !== 1) {
+              throw new Error("Для Veo referenceType=style нужно ровно 1 изображение");
+            }
+          }
+          refFiles.forEach((f) => formData.append("input_references", f));
+        }
+
+        const res = await fetch("/generate", {
+          method: "POST",
+          body: formData
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Ошибка запуска");
+
+        currentTaskId = data.task_id;
+        localStorage.setItem("video_task_id", currentTaskId);
+        if (typeof data.credits_spent === "number") {
+          creditsNeedEl.textContent = `${data.credits_spent} кр.`;
+        }
+        if (typeof data.credits_after === "number") {
+          creditsBalanceEl.textContent = `${data.credits_after} кр.`;
+        }
+        startPolling(currentTaskId);
+      } catch (err) {
+        errorBox.textContent = err.message;
+        await refreshCredits();
+      }
+    });
+
+    buyCreditsBtn.addEventListener("click", async () => {
+      const clientToken = clientTokenEl.value.trim();
+      if (!clientToken) return (paymentBoxEl.textContent = "Сначала введи client token.");
+      const packageId = paymentPackageEl.value;
+      if (!packageId) return (paymentBoxEl.textContent = "Выбери пакет.");
+      try {
+        paymentBoxEl.textContent = "Создаю платеж...";
+        const res = await fetch("/payments/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_token: clientToken, package_id: packageId }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Ошибка создания платежа");
+        if (!data.payment_url) throw new Error("Платеж создан, но ссылка не получена");
+        lastPaymentId = data.payment_id;
+        localStorage.setItem("last_payment_id", lastPaymentId);
+        paymentBoxEl.textContent = `Платеж создан: ${data.payment_id}. Открываю страницу оплаты...`;
+        await loadPaymentHistory();
+        window.open(data.payment_url, "_blank", "noopener,noreferrer");
+        await pollPaymentStatus(data.payment_id, clientToken);
+      } catch (err) {
+        paymentBoxEl.textContent = `Оплата недоступна: ${err.message}`;
+      }
+    });
+
+    checkPaymentBtn.addEventListener("click", async () => {
+      const clientToken = clientTokenEl.value.trim();
+      if (!clientToken) return (paymentBoxEl.textContent = "Сначала введи client token.");
+      if (!lastPaymentId) return (paymentBoxEl.textContent = "Сначала создай платеж.");
+      paymentBoxEl.textContent = "Проверяю статус платежа...";
+      await pollPaymentStatus(lastPaymentId, clientToken);
+    });
+
+    providerEl.addEventListener("change", () => applyProviderCapabilities(providerEl.value || "sora"));
+    [secondsEl, modelEl].forEach((el) => el.addEventListener("change", renderNeedCredits));
+    clientTokenEl.addEventListener("blur", () => {
+      localStorage.setItem("web_client_token", clientTokenEl.value.trim());
+      refreshCredits();
+      restoreLastPayment();
+      loadPaymentHistory();
+    });
+
+    videoPlayer.addEventListener("canplay", () => {
+      okBox.textContent = "Видео готово. Предпросмотр доступен.";
+    });
+    videoPlayer.addEventListener("error", () => {
+      okBox.textContent = "";
+      errorBox.textContent = "Предпросмотр не загрузился в браузере. Используй кнопку \"Скачать видео\".";
+    });
+
+    loadProviders();
+    loadPaymentPackages();
+    renderNeedCredits();
+    refreshCredits();
+    restoreLastPayment();
+    loadPaymentHistory();
+    if (currentTaskId) {
+      taskIdEl.textContent = currentTaskId;
+      startPolling(currentTaskId);
+    }
+  </script>
+</body>
+</html>

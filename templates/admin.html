@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Billing</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 14px; }
+    label { display: block; margin-bottom: 5px; font-weight: 600; }
+    input, select, button { width: 100%; padding: 8px; margin-bottom: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border: 1px solid #ddd; padding: 6px; text-align: left; }
+    .ok { color: #0a7a0a; margin-bottom: 10px; }
+    .err { color: #b30000; margin-bottom: 10px; }
+    .muted { color: #666; font-size: 12px; }
+    .rate-wrap { min-width: 160px; }
+    .rate-track {
+      width: 140px;
+      height: 8px;
+      border-radius: 999px;
+      background: #eee;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .rate-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #0a7a0a, #16a34a);
+    }
+    .rate-fill.warn {
+      background: linear-gradient(90deg, #b45309, #d97706);
+    }
+    .rate-fill.bad {
+      background: linear-gradient(90deg, #b91c1c, #dc2626);
+    }
+    .mono { font-family: Consolas, "Courier New", monospace; font-size: 12px; }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid #ddd;
+      background: #f3f4f6;
+    }
+    .pill.ok {
+      color: #065f46;
+      background: #d1fae5;
+      border-color: #86efac;
+    }
+    .pill.warn {
+      color: #92400e;
+      background: #fef3c7;
+      border-color: #fcd34d;
+    }
+    .pill.bad {
+      color: #991b1b;
+      background: #fee2e2;
+      border-color: #fca5a5;
+    }
+    .actions-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .btn-small {
+      width: auto;
+      margin-bottom: 0;
+      padding: 6px 8px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Мини-админка биллинга</h2>
+  <p class="muted">Доступ по <code>WEB_ADMIN_TOKEN</code></p>
+  <p>
+    <a href="/admin/export?token={{ admin_token }}&user_id={{ filter_user_id }}">Скачать metrics CSV</a>
+  </p>
+
+  {% if message %}
+    <div class="ok">{{ message }}</div>
+  {% endif %}
+  {% if error %}
+    <div class="err">{{ error }}</div>
+  {% endif %}
+
+  <div class="grid">
+    <div class="card">
+      <h3>Операции</h3>
+      <form method="post" action="/admin/action">
+        <input type="hidden" name="admin_token" value="{{ admin_token }}">
+        <input type="hidden" name="page" value="{{ page }}">
+        <input type="hidden" name="page_size" value="{{ page_size }}">
+        <input type="hidden" name="payment_status" value="{{ payment_status_filter }}">
+        <label>user_id (telegram chat_id)</label>
+        <input type="text" name="user_id" value="{{ filter_user_id }}" required>
+
+        <label>Действие</label>
+        <select name="action" required>
+          <option value="add_credits">Начислить кредиты</option>
+          <option value="set_credits">Установить кредиты</option>
+          <option value="set_token">Установить web token</option>
+        </select>
+
+        <label>amount (для add/set)</label>
+        <input type="number" name="amount" placeholder="Например 50">
+
+        <label>client_token (для set_token)</label>
+        <input type="text" name="client_token" placeholder="Например client-abc-123">
+
+        <button type="submit">Применить</button>
+        <div style="display:flex; gap:8px;">
+          <button type="submit" name="quick_amount" value="10">+10</button>
+          <button type="submit" name="quick_amount" value="50">+50</button>
+          <button type="submit" name="quick_amount" value="100">+100</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Пользователи</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>user_id</th>
+            <th>credits</th>
+            <th>client_token</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td>{{ u.user_id }}</td>
+            <td>{{ u.credits }}</td>
+            <td>{{ u.client_token or "" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="grid" style="margin-top: 20px;">
+    <div class="card">
+      <h3>Сводка по провайдерам (recent tasks)</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>provider</th>
+            <th>completed</th>
+            <th>failed</th>
+            <th>finished</th>
+            <th>success %</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if provider_stats %}
+            {% for row in provider_stats %}
+            <tr>
+              <td>{{ row.provider }}</td>
+              <td>{{ row.completed }}</td>
+              <td>{{ row.failed }}</td>
+              <td>{{ row.finished }}</td>
+              <td class="rate-wrap">
+                <div>{{ row.success_rate }}%</div>
+                <div class="rate-track">
+                  <div
+                    class="rate-fill{% if row.success_rate < 50 %} bad{% elif row.success_rate < 80 %} warn{% endif %}"
+                    style="width: {{ row.success_rate }}%;"
+                  ></div>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="5" class="muted">Нет данных.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Топ ошибок генерации</h3>
+      <div class="muted">
+        Veo upstream unavailable (recent tasks): {{ veo_upstream_unavailable_count or 0 }}
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>count</th>
+            <th>error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if top_errors %}
+            {% for row in top_errors %}
+            <tr>
+              <td>{{ row.count }}</td>
+              <td>{{ row.error }}</td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="2" class="muted">Нет ошибок.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top: 20px;">
+    <h3>Последние платежи</h3>
+    <div class="muted">
+      Показываются последние 20 платежей{% if filter_user_id %} для user_id={{ filter_user_id }}{% endif %}.
+    </div>
+    <form method="get" action="/admin" style="display:flex; gap:8px; align-items:flex-end; margin: 10px 0 14px;">
+      <input type="hidden" name="token" value="{{ admin_token }}">
+      <input type="hidden" name="user_id" value="{{ filter_user_id }}">
+      <input type="hidden" name="page" value="{{ page }}">
+      <input type="hidden" name="page_size" value="{{ page_size }}">
+      <div style="width:220px;">
+        <label>Фильтр по status</label>
+        <select name="payment_status">
+          {% for code in payment_status_options %}
+            <option value="{{ code }}" {% if payment_status_filter == code %}selected{% endif %}>
+              {{ "Все статусы" if not code else code ~ " — " ~ payment_status_labels.get(code, code) }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" style="width:140px;">Применить</button>
+    </form>
+    <table>
+      <thead>
+        <tr>
+          <th>payment_id</th>
+          <th>provider</th>
+          <th>raw_mode</th>
+          <th>external_payment_id</th>
+          <th>user_id</th>
+          <th>package</th>
+          <th>amount</th>
+          <th>credits</th>
+          <th>status</th>
+          <th>payment_url</th>
+          <th>applied</th>
+          <th>created_at</th>
+          <th>credited_at</th>
+          <th>actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if recent_payments %}
+          {% for p in recent_payments %}
+          {% set status_upper = (p.status or '')|upper %}
+          <tr>
+            <td class="mono">{{ p.payment_id }}</td>
+            <td>{{ p.provider }}</td>
+            <td>{{ p.raw_mode or "—" }}</td>
+            <td class="mono">{{ p.external_payment_id or "—" }}</td>
+            <td>{{ p.user_id }}</td>
+            <td>{{ p.package_id }}</td>
+            <td>{{ p.amount_rub }} ₽</td>
+            <td>{{ p.credits }}</td>
+            <td>
+              <span class="pill{% if status_upper == 'CONFIRMED' %} ok{% elif status_upper in ('REJECTED', 'CANCELED', 'INIT_FAILED', 'DEADLINE_EXPIRED', 'EXPIRED') %} bad{% elif status_upper in ('NEW', 'FORM_SHOWED', 'AUTHORIZED') %} warn{% endif %}">
+                {{ p.status_label }}
+              </span>
+            </td>
+            <td>
+              {% if p.payment_url %}
+                <a href="{{ p.payment_url }}" target="_blank" rel="noopener noreferrer">open</a>
+              {% else %}
+                <span class="muted">—</span>
+              {% endif %}
+            </td>
+            <td>{{ "yes" if p.credits_applied else "no" }}</td>
+            <td>{{ p.created_at or "" }}</td>
+            <td>{{ p.credited_at or "" }}</td>
+            <td>
+              {% if mock_payments_enabled and p.provider == 'mock' and status_upper not in ('CONFIRMED', 'CANCELED', 'REJECTED', 'DEADLINE_EXPIRED', 'EXPIRED') %}
+                <div class="actions-row">
+                  <form method="post" action="/admin/payment_action" style="margin:0;">
+                    <input type="hidden" name="admin_token" value="{{ admin_token }}">
+                    <input type="hidden" name="user_id" value="{{ filter_user_id }}">
+                    <input type="hidden" name="payment_status" value="{{ payment_status_filter }}">
+                    <input type="hidden" name="page" value="{{ page }}">
+                    <input type="hidden" name="page_size" value="{{ page_size }}">
+                    <input type="hidden" name="payment_id" value="{{ p.payment_id }}">
+                    <input type="hidden" name="action" value="confirm_mock">
+                    <button class="btn-small" type="submit">Подтвердить mock</button>
+                  </form>
+                  <form method="post" action="/admin/payment_action" style="margin:0;">
+                    <input type="hidden" name="admin_token" value="{{ admin_token }}">
+                    <input type="hidden" name="user_id" value="{{ filter_user_id }}">
+                    <input type="hidden" name="payment_status" value="{{ payment_status_filter }}">
+                    <input type="hidden" name="page" value="{{ page }}">
+                    <input type="hidden" name="page_size" value="{{ page_size }}">
+                    <input type="hidden" name="payment_id" value="{{ p.payment_id }}">
+                    <input type="hidden" name="action" value="cancel_mock">
+                    <button class="btn-small" type="submit">Отменить mock</button>
+                  </form>
+                </div>
+              {% else %}
+                <span class="muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        {% else %}
+          <tr><td colspan="14" class="muted">Платежей пока нет.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card" style="margin-top: 20px;">
+    <h3>Последние операции ledger</h3>
+    <form method="get" action="/admin" style="display:flex; gap:8px; align-items:flex-end;">
+      <input type="hidden" name="token" value="{{ admin_token }}">
+      <input type="hidden" name="payment_status" value="{{ payment_status_filter }}">
+      <div style="flex:1;">
+        <label>Фильтр по user_id</label>
+        <input type="text" name="user_id" value="{{ filter_user_id }}">
+      </div>
+      <div style="width:110px;">
+        <label>page_size</label>
+        <input type="number" min="5" max="200" name="page_size" value="{{ page_size }}">
+      </div>
+      <input type="hidden" name="page" value="1">
+      <button type="submit" style="width:130px;">Применить</button>
+    </form>
+    <div class="muted">Всего операций: {{ total_ledger }}</div>
+    <table>
+      <thead>
+        <tr>
+          <th>id</th>
+          <th>user_id</th>
+          <th>delta</th>
+          <th>reason</th>
+          <th>created_at</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in ledger %}
+        <tr>
+          <td>{{ row.id }}</td>
+          <td>{{ row.user_id }}</td>
+          <td>{{ row.delta }}</td>
+          <td>{{ row.reason }}</td>
+          <td>{{ row.created_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div style="display:flex; gap:10px; margin-top:10px; align-items:center;">
+      {% if has_prev %}
+      <a href="/admin?token={{ admin_token }}&user_id={{ filter_user_id }}&payment_status={{ payment_status_filter }}&page={{ page - 1 }}&page_size={{ page_size }}">← Prev</a>
+      {% else %}
+      <span class="muted">← Prev</span>
+      {% endif %}
+      <span>Page {{ page }}</span>
+      {% if has_next %}
+      <a href="/admin?token={{ admin_token }}&user_id={{ filter_user_id }}&payment_status={{ payment_status_filter }}&page={{ page + 1 }}&page_size={{ page_size }}">Next →</a>
+      {% else %}
+      <span class="muted">Next →</span>
+      {% endif %}
+    </div>
+  </div>
+</body>
+</html>

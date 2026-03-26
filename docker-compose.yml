@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  web:
+    build: .
+    container_name: video-web
+    command: gunicorn -w 2 -b 0.0.0.0:5000 app:app
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      - WEB_TASKS_DB_PATH=/app/data/web_tasks.db
+      - WEB_OUTPUT_DIR=/app/data/web_videos
+      - BILLING_DB_PATH=/app/billing/billing.db
+    volumes:
+      - web_data:/app/data
+      - billing_data:/app/billing
+    restart: unless-stopped
+
+  bot:
+    build: .
+    container_name: video-bot
+    command: python telegram_bot.py
+    env_file:
+      - .env
+    environment:
+      - BILLING_DB_PATH=/app/billing/billing.db
+    volumes:
+      - billing_data:/app/billing
+    restart: unless-stopped
+
+volumes:
+  web_data:
+  billing_data:
